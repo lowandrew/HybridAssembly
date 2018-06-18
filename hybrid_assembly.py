@@ -2,8 +2,11 @@
 
 import os
 import sys
+import glob
+import shutil
 import logging
 import argparse
+import datetime
 import subprocess
 import multiprocessing
 
@@ -56,7 +59,7 @@ def file_check(file_path):
     return file_is_present
 
 
-def main(forward_illumina, reverse_illumina, pacbio, output_dir, assembly_name, threads=8, logfile=None):
+def main(forward_illumina, reverse_illumina, pacbio, output_dir, assembly_name, threads=8, logfile=None, keep_files=False):
     # Get logger setup.
     logging.basicConfig(format='\033[1m %(asctime)s \033[0m %(message)s ',
                         level=logging.INFO,
@@ -77,23 +80,40 @@ def main(forward_illumina, reverse_illumina, pacbio, output_dir, assembly_name, 
     trimmed_reverse = os.path.join(output_dir, assembly_name + '_trimmed_R2.fastq.gz')
     corrected_forward = os.path.join(output_dir, assembly_name + '_corrected_R1.fastq.gz')
     corrected_reverse = os.path.join(output_dir, assembly_name + '_corrected_R2.fastq.gz')
+    logging.info('Trimming Illumina reads...')
     trim_reads(forward_in=forward_illumina,
                reverse_in=reverse_illumina,
                forward_trimmed=trimmed_forward,
                reverse_trimmed=trimmed_reverse,
-               threads=threads)
+               threads=threads,
+               logfile=logfile)
+    logging.info('Correcting Illumina reads...')
     correct_reads(forward_in=trimmed_forward,
                   reverse_in=trimmed_reverse,
                   forward_corrected=corrected_forward,
                   reverse_corrected=corrected_reverse,
-                  threads=threads)
+                  threads=threads,
+                  logfile=logfile)
     # Once Illumina reads are ready to go, it's time to assemble!
+    logging.info('Assembling using Unicycler. This will take quite a while...')
     assemble(forward_illumina=corrected_forward,
              reverse_illumina=corrected_reverse,
              pacbio=pacbio,
              output_dir=output_dir,
-             threads=threads)
-    # TODO: once I verify this actually works, make it also do some cleanup.
+             threads=threads,
+             logfile=logfile)
+
+    # With assembly done, clean up all the files we don't really care about from Unicycler (so all except the
+    # assembly FASTA, unless user said to keep them), and rename the assembly to something better.
+    shutil.move(os.path.join(output_dir, 'assembly.fasta'), os.path.join(output_dir, assembly_name + '.fasta'))
+    if not keep_files:
+        logging.info('Cleaning up Unicycler output files...')
+        files_to_remove = glob.glob(os.path.join(output_dir, '*.gfa'))
+        files_to_remove += glob.glob(os.path.join(output_dir, '*.fastq.gz'))
+        for item in files_to_remove:
+            os.remove(item)
+        shutil.rmtree(os.path.join(output_dir, 'pilon_polish'))
+    logging.info('Hybrid Assembly complete. Assembly file is {}'.format(os.path.join(output_dir, assembly_name + '.fasta')))
 
 
 if __name__ == '__main__':
@@ -117,8 +137,8 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output_dir',
                         type=str,
                         required=True,
-                        help='Directory where you want to create your output. Will be created if it does not'
-                             ' already exist.')
+                        help='Directory where you want to create your output. Will be created - DO NOT USE an existing'
+                             ' directory, as files may be deleted from it.')
     parser.add_argument('-n', '--name',
                         type=str,
                         default='hybrid_assembly',
@@ -128,6 +148,16 @@ if __name__ == '__main__':
                         type=int,
                         default=cpu_count,
                         help='Number of threads to use. Defaults to all on your machine.')
+    parser.add_argument('-l', '--logfile',
+                        type=str,
+                        default=datetime.datetime.now().strftime('%Y%m%d-%H%m%S') + '_log.txt',
+                        help='Name of logfile to use. Defaults to YYYYMMDD-HHMMSS_log.txt in your current working'
+                             ' directory.')
+    parser.add_argument('-k', '--keep_files',
+                        default=False,
+                        action='store_true',
+                        help='By default, all files created by Unicycle except the final assembly will be deleted.'
+                             ' If for some reason you want to keep them, set this flag.')
     args = parser.parse_args()
 
     pacbio = args.pacbio
@@ -136,10 +166,14 @@ if __name__ == '__main__':
     output_dir = args.output_dir
     assembly_name = args.name
     threads = args.threads
+    logfile = args.logfile
+    keep_files = args.keep_files
 
     main(forward_illumina=forward_illumina,
          reverse_illumina=reverse_illumina,
          pacbio=pacbio,
          output_dir=output_dir,
          assembly_name=assembly_name,
-         threads=threads)
+         threads=threads,
+         logfile=logfile,
+         keep_files=keep_files)
