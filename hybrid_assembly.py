@@ -15,7 +15,7 @@ def run_cmd(cmd, logfile):
     if logfile is None:
         subprocess.call(cmd, shell=True)
     else:
-        with(logfile, 'a+') as f:
+        with open(logfile, 'a+') as f:
             f.write(cmd)
             subprocess.call(cmd, shell=True, stdout=f, stderr=f)
 
